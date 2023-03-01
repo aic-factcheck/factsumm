@@ -12,14 +12,8 @@ from factsumm.utils.module_question import load_qa, load_qg
 from factsumm.utils.module_sentence import load_bert_score
 from factsumm.utils.utils import Config, qags_score
 
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
-logging.getLogger("transformers").setLevel(logging.ERROR)
-logging.getLogger("flair").setLevel(logging.ERROR)
-
 
 class FactSumm:
-
     def __init__(
         self,
         ner_model: str = None,
@@ -48,7 +42,9 @@ class FactSumm:
         self.rel = rel_model if rel_model is not None else self.config.REL_MODEL
         self.qg = qg_model if qg_model is not None else self.config.QG_MODEL
         self.qa = qa_model if qa_model is not None else self.config.QA_MODEL
-        self.bert_score = bert_score_model if bert_score_model is not None else self.config.BERT_SCORE_MODEL
+        self.bert_score = (
+            bert_score_model if bert_score_model is not None else self.config.BERT_SCORE_MODEL
+        )
         self.ie = None
 
     def build_perm(
@@ -72,14 +68,16 @@ class FactSumm:
         for line, line_entities in zip(lines, total_entities):
             line_perms = list(permutations(line_entities, 2))
 
-            line_perms = [{
-                "text":
-                    line,
-                "spans": [
-                    (comb[0]["start"], comb[0]["end"]),
-                    (comb[-1]["start"], comb[-1]["end"]),
-                ]
-            } for comb in line_perms]
+            line_perms = [
+                {
+                    "text": line,
+                    "spans": [
+                        (comb[0]["start"], comb[0]["end"]),
+                        (comb[-1]["start"], comb[-1]["end"]),
+                    ],
+                }
+                for comb in line_perms
+            ]
 
             total_perms.append(line_perms)
 
@@ -119,17 +117,16 @@ class FactSumm:
         return [line.strip() for line in self.segmenter.segment(text)]
 
     def _print_entities(self, mode: str, total_entities: List[List[Dict]]):
-        # yapf:disable
         print(f"{mode.upper()} Entities")
         for i, line_entities in enumerate(total_entities):
             print(f'{i+1}: {[(entity["word"], entity["entity"]) for entity in line_entities]}')
         print()
-        # yapf:enable
 
     def calculate_rouge(
         self,
         source: str,
         summary: str,
+        verbose: bool = False,
     ) -> Tuple[float, float, float]:
         """
         Calculate ROUGE score
@@ -148,9 +145,9 @@ class FactSumm:
         rouge_2 = self.rouge.rouge_n(summary, source_lines, 2)
         rouge_l = self.rouge.rouge_l(summary, source_lines)
 
-        print(
-            f"Avg. ROUGE-1: {rouge_1}\nAvg. ROUGE-2: {rouge_2}\nAvg. ROUGE-L: {rouge_l}"
-        )
+        if verbose:
+            print(f"Avg. ROUGE-1: {rouge_1}\nAvg. ROUGE-2: {rouge_2}\nAvg. ROUGE-L: {rouge_l}")
+
         return rouge_1, rouge_2, rouge_l
 
     def _print_facts(self, mode: str, facts: Set[Tuple]):
@@ -174,13 +171,9 @@ class FactSumm:
         source_tuple = {(source[0], source[1]) for source in sources}
         summary_tuple = {(summary[0], summary[1]) for summary in summaries}
 
-        sources = {
-            source for source in sources
-            if (source[0], source[1]) in summary_tuple
-        }
+        sources = {source for source in sources if (source[0], source[1]) in summary_tuple}
         summaries = {
-            summary for summary in summaries
-            if (summary[0], summary[1]) in source_tuple
+            summary for summary in summaries if (summary[0], summary[1]) in source_tuple
         }
         return sources, summaries
 
@@ -241,17 +234,17 @@ class FactSumm:
             fact_score = 0.0
         else:
             fact_score = len(common_facts) / len(summary_facts)
-        print(f"Fact Score: {fact_score}")
+
+        if verbose:
+            print(f"Fact Score: {fact_score}")
 
         return source_ents, summary_ents, fact_score
 
     def _print_qas(self, mode: str, questions: List[Dict]):
-        # yapf:disable
         print(f"Answers based on {mode.upper()} (Questions are generated from Summary)")
         for question in questions:
             print(f"[Q] {question['question']}\t[Pred] {question['prediction']}")
         print()
-        # yapf:enable
 
     def extract_qas(
         self,
@@ -302,7 +295,8 @@ class FactSumm:
             self._print_qas("summary", summary_answers)
 
         qa_score = qags_score(source_answers, summary_answers)
-        print(f"QAGS Score: {qa_score}\n")
+        if verbose:
+            print(f"QAGS Score: {qa_score}\n")
 
         return qa_score
 
@@ -325,17 +319,23 @@ class FactSumm:
         if self.ie is None:
             self.ie = load_ie()
 
-        source_triples = {(
-            triple["subject"],
-            triple["relation"],
-            triple["object"],
-        ) for triple in self.ie(source)}
+        source_triples = {
+            (
+                triple["subject"],
+                triple["relation"],
+                triple["object"],
+            )
+            for triple in self.ie(source)
+        }
 
-        summary_triples = {(
-            triple["subject"],
-            triple["relation"],
-            triple["object"],
-        ) for triple in self.ie(summary)}
+        summary_triples = {
+            (
+                triple["subject"],
+                triple["relation"],
+                triple["object"],
+            )
+            for triple in self.ie(summary)
+        }
 
         source_triples, summary_triples = self._filter_out(
             source_triples,
@@ -353,7 +353,8 @@ class FactSumm:
         else:
             triple_score = len(common_triples) / len(summary_triples)
 
-        print(f"Triple Score: {triple_score}\n")
+        if verbose:
+            print(f"Triple Score: {triple_score}\n")
 
         return triple_score
 
@@ -361,6 +362,7 @@ class FactSumm:
         self,
         source: str,
         summary: str,
+        verbose: bool = False,
         device: str = "cpu",
     ) -> List[float]:
         """
@@ -392,9 +394,10 @@ class FactSumm:
             score.pop(-1)
             filtered_scores.append(sum(score) / len(score))
 
-        print(
-            f"BERTScore Score\nPrecision: {filtered_scores[0]}\nRecall: {filtered_scores[1]}\nF1: {filtered_scores[2]}"
-        )
+        if verbose:
+            print(
+                f"BERTScore Score\nPrecision: {filtered_scores[0]}\nRecall: {filtered_scores[1]}\nF1: {filtered_scores[2]}"
+            )
 
         return filtered_scores
 
@@ -410,9 +413,9 @@ class FactSumm:
             summaries = [summaries]
 
         if len(sources) != len(summaries):
-            # yapf:disable
-            raise ValueError("`sources` and `summaries` must have the same number of elements!")
-            # yapf:enable
+            raise ValueError(
+                "`sources` and `summaries` must have the same number of elements!"
+            )
 
         num_pairs = len(sources)
 
@@ -444,12 +447,12 @@ class FactSumm:
             triple_score = self.extract_triples(source, summary, verbose)
             triple_scores += triple_score
 
-            rouge_1, rouge_2, rouge_l = self.calculate_rouge(source, summary)
+            rouge_1, rouge_2, rouge_l = self.calculate_rouge(source, summary, verbose)
             rouges[0] += rouge_1
             rouges[1] += rouge_2
             rouges[2] += rouge_l
 
-            bert_score = self.calculate_bert_score(source, summary, device)
+            bert_score = self.calculate_bert_score(source, summary, verbose, device)
             bert_scores[0] += bert_score[0]
             bert_scores[1] += bert_score[1]
             bert_scores[2] += bert_score[2]
